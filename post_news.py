@@ -1,5 +1,13 @@
 """
 Pulse - Auto US News Poster for Facebook (photo + detailed caption + hashtags)
+-------------------------------------------------------------------------------
+Fetches fresh general US news from Google News RSS (free, no API key),
+grabs the article's main photo, asks Groq's free LLM to write a detailed,
+strictly-accurate summary with hashtags, and posts the photo with that
+summary as the caption. Falls back to a text-only post if no photo is found.
+Tracks posted article URLs so nothing is ever repeated.
+
+Meant to be run on a schedule (see post-news.yml).
 """
 
 import os
@@ -10,20 +18,27 @@ import hashlib
 import requests
 import feedparser
 
+# ---------------------------------------------------------------------------
+# Config (all secrets come from environment variables - never hardcode them)
+# ---------------------------------------------------------------------------
 FB_PAGE_ID = os.environ["FB_PAGE_ID"]
 FB_PAGE_ACCESS_TOKEN = os.environ["FB_PAGE_ACCESS_TOKEN"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 
 DEDUPE_FILE = "posted_urls.json"
-MAX_POSTS_PER_RUN = 1
-GROQ_MODEL = "llama-3.3-70b-versatile"
+MAX_POSTS_PER_RUN = 1          # keep at 1 if the job runs every 10 min
+GROQ_MODEL = "openai/gpt-oss-120b"  # Groq's current free recommended model (llama-3.3-70b-versatile was retired Aug 16, 2026)
 
+# General/breaking US news via Google News RSS - free, no key, very reliable
 RSS_FEEDS = [
     "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/headlines/section/geo/United%20States?hl=en-US&gl=US&ceid=US:en",
 ]
 
 
+# ---------------------------------------------------------------------------
+# Dedupe storage
+# ---------------------------------------------------------------------------
 def load_posted():
     if os.path.exists(DEDUPE_FILE):
         with open(DEDUPE_FILE, "r") as f:
@@ -40,6 +55,9 @@ def url_hash(url):
     return hashlib.sha256(url.encode()).hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# Fetch fresh candidates
+# ---------------------------------------------------------------------------
 def fetch_candidates(posted):
     candidates = []
     seen_this_run = set()
@@ -72,6 +90,9 @@ def fetch_candidates(posted):
     return candidates
 
 
+# ---------------------------------------------------------------------------
+# Grab the article's main photo (Open Graph image tag)
+# ---------------------------------------------------------------------------
 def fetch_article_image(article_url):
     try:
         resp = requests.get(article_url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
@@ -86,6 +107,9 @@ def fetch_article_image(article_url):
     return None
 
 
+# ---------------------------------------------------------------------------
+# AI rewrite (Groq - free tier, no credit card) - detailed + hashtags
+# ---------------------------------------------------------------------------
 def generate_post(title, summary, url):
     prompt = f"""You are the social media editor for a US news Facebook page called "Pulse".
 
@@ -118,6 +142,9 @@ Return ONLY the post text - no preamble, no quotation marks."""
     return data["choices"][0]["message"]["content"].strip()
 
 
+# ---------------------------------------------------------------------------
+# Post to Facebook Page - photo with caption, or text-only fallback
+# ---------------------------------------------------------------------------
 def post_photo_to_facebook(image_url, caption):
     resp = requests.post(
         f"https://graph.facebook.com/{FB_PAGE_ID}/photos",
@@ -149,6 +176,9 @@ def post_text_to_facebook(message):
     return resp.json()
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 def main():
     posted = load_posted()
     candidates = fetch_candidates(posted)
