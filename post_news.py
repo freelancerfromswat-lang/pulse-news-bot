@@ -100,13 +100,22 @@ Return ONLY the post text - no preamble, no quotation marks."""
             "model": GROQ_MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.5,
-            "max_tokens": 400,
+            "max_tokens": 900,
+            "reasoning_effort": "low",
         },
         timeout=30,
     )
     resp.raise_for_status()
     data = resp.json()
-    return data["choices"][0]["message"]["content"].strip()
+    text = (data["choices"][0]["message"]["content"] or "").strip()
+
+    # Safety net: if the AI still returns nothing, fall back to a plain
+    # headline + summary post so Facebook never receives an empty message.
+    if not text:
+        clean_summary = re.sub(r"<[^>]+>", "", summary).strip()
+        text = f"{title}\n\n{clean_summary}\n\n#USNews\nRead more: {url}"
+
+    return text
 
 
 def post_text_to_facebook(message):
